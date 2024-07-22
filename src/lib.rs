@@ -33,31 +33,30 @@ impl Display for Url {
 
 impl Url {
     pub fn new(url: &str) -> Url {
-        let (scheme, url) = url.split_once(':').unwrap();
+        let (scheme, mut url) = url.split_once(':').unwrap();
         match scheme {
             "http" | "https" => {
-                let splitter = Splitter { tokens: "//?:/" };
-                let mut parts = splitter.split(url);
-                // ["", "", host, <port>?, <path>]
-                let (_, _, host, port, path) = (
-                    parts.pop(),
-                    parts.pop(),
-                    parts.pop(),
-                    parts.pop(),
-                    parts.pop(),
-                );
+                url = url.strip_prefix("//").unwrap();
+                let (host_port, path) = match url.split_once('/') {
+                    Some(result) => result,
+                    None => (url, ""),
+                };
+                let (host, port) = match host_port.split_once(':') {
+                    Some(result) => result,
+                    None => (host_port, Self::default_port(scheme)),
+                };
+
                 // always start a path with a slash if not empty
                 let path = match path {
-                    Some(s) if !s.is_empty() => Some(format!("/{}", s)),
-                    _ => path,
+                    s if !s.is_empty() => format!("/{}", s),
+                    _ => path.to_string(),
                 };
                 // if ends with a slash, preserve the slash
                 let path = match (url.ends_with('/'), path) {
-                    (true, Some(s)) if !s.ends_with('/') => Some(format!("{}/", s)),
+                    (true, s) if !s.ends_with('/') => format!("{}/", s),
                     (_, path) => path,
                 };
-                let port = Self::decide_port(scheme, port);
-                Url::Web(scheme.to_string(), host.unwrap(), port, path.unwrap())
+                Url::Web(scheme.to_string(), host.to_string(), port.to_string(), path.to_string())
             }
             "data" => {
                 let (mimetype, data) = url
@@ -70,96 +69,25 @@ impl Url {
                 scheme.to_string(),
                 url.strip_prefix("//").unwrap().to_string(),
             ),
+            "view-source" => Url::ViewSource(
+                Box::new(Url::new(url))
+            ),
             _ => todo!("the rest"),
         }
     }
 
-    fn decide_port(scheme: &str, port: Option<String>) -> String {
-        match port {
-            Some(s) if s.is_empty() => Self::default_port(scheme),
-            None => Self::default_port(scheme),
-            Some(p) => p,
-        }
-    }
-
-    fn default_port(scheme: &str) -> String {
+    fn default_port(scheme: &str) -> &str {
         match scheme {
             "https" => "443",
             "http" => "80",
 
             _ => "",
         }
-        .to_string()
     }
 
     // fn request_response(&self) -> Response {
 
     // }
-}
-
-struct Splitter<'a> {
-    tokens: &'a str,
-}
-
-struct Token {
-    token: Option<char>,
-    la: Option<char>,
-}
-
-impl<'a> Splitter<'a> {
-    fn split(&self, s: &str) -> Vec<String> {
-        let mut parts = Vec::new();
-        let mut part = String::from("");
-        let mut token_iter = self.tokens.chars();
-        let mut next = Self::next(&mut token_iter);
-
-        for c in s.chars() {
-            if next.token == Some(c) {
-                if next.la.is_some() {
-                    next.token = next.la;
-                } else {
-                    next = Self::next(&mut token_iter);
-                }
-                parts.push(part);
-                part = String::from("");
-            } else if next.la == Some(c) {
-                next = Self::next(&mut token_iter);
-                parts.push(part);
-                parts.push(String::from(""));
-                part = String::from("");
-            } else {
-                part.push(c);
-            }
-        }
-        if next.la.is_some() {
-            parts.push(part);
-            parts.push(String::from(""));
-        } else {
-            parts.push(part);
-        }
-
-        // XXX: not sure this would work with ??
-        let expected_len = self.tokens.chars().filter(|t| t != &'?').count() + 1;
-
-        for _ in parts.len()..expected_len {
-            parts.push(String::from(""));
-        }
-        parts.into_iter().rev().collect()
-    }
-
-    fn next(token_iter: &mut std::str::Chars) -> Token {
-        let next = token_iter.next();
-        match next {
-            Some('?') => Token {
-                token: token_iter.next(),
-                la: token_iter.next(),
-            },
-            _ => Token {
-                token: next,
-                la: None,
-            },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -224,6 +152,20 @@ mod tests {
     }
 
     #[test]
+    fn url_with_host_port_path() {
+        let url = Url::new("http://127.0.0.1:1234/my/path/hello");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "127.0.0.1".to_string());
+                assert_eq!(port, "1234".to_string());
+                assert_eq!(path, "/my/path/hello");
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
     fn url_with_https() {
         let url = Url::new("https://example.org");
         match url {
@@ -264,5 +206,27 @@ mod tests {
             }
             _ => unreachable!(),
         };
+    }
+
+    #[test]
+    fn view_source() {
+        let raw_url = "view-source:http://localhost:8888/data/index.html";
+        let url = Url::new(raw_url);
+        let the_source = match url {
+            Url::ViewSource(the_source) => {
+                the_source
+            },
+            _ => unreachable!(),
+        };
+
+        match *the_source {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "localhost".to_string());
+                assert_eq!(port, "8888".to_string());
+                assert_eq!(path, "/data/index.html");
+            },
+            _ => unreachable!()
+        }
     }
 }
