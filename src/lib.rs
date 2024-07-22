@@ -1,67 +1,100 @@
 use std::fmt::Display;
 
-#[derive(Debug)]
-pub struct URL {
-    scheme: Option<String>,
-    host: Option<String>,
-    // FIXME: when the type matters
-    port: Option<String>,
-    path: Option<String>,
+struct Response {
+    version: Option<String>,
+    status: Option<String>,
+    explanation: Option<String>,
+    body: Option<String>,
 }
 
-impl Display for URL {
+pub enum Url {
+    //  scheme, host, port, path
+    Web(String, String, String, String),
+    // scheme, path
+    File(String, String),
+    // scheme, mimetype, data
+    Data(String, String, String),
+    // Must contain a Url::Web
+    ViewSource(Box<Url>),
+}
+
+impl Display for Url {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let scheme = self.scheme.clone().unwrap_or("".to_string());
-        let host = self.host.clone().unwrap_or("".to_string());
-        let port = self.port.clone().unwrap_or("".to_string());
-        let path = self.path.clone().unwrap_or("".to_string());
-        write!(f, "{}://{}:{}{}", scheme, host, port, path)
+        match self {
+            Url::Web(scheme, host, port, path) => {
+                write!(f, "{}://{}:{}{}", scheme, host, port, path)
+            }
+            Url::File(scheme, path) => write!(f, "{}://{}", scheme, path),
+            Url::Data(scheme, mimetype, data) => write!(f, "{}://{},{}", scheme, mimetype, data),
+            Url::ViewSource(the_source) => write!(f, "view-source:{}", the_source),
+        }
     }
 }
 
-impl URL {
-    pub fn new(url: &str) -> URL {
-        let splitter = Splitter { tokens: "://?:/" };
-        let mut parts = splitter.split(url);
-        // [scheme, "", "", host, <port>?, <path>]
-        let (scheme, _, _, host, port, path) = (
-            parts.pop(),
-            parts.pop(),
-            parts.pop(),
-            parts.pop(),
-            parts.pop(),
-            parts.pop(),
-        );
-        // always start a path with a slash if not empty
-        let path = match path {
-            Some(s) if !s.is_empty() => Some(format!("/{}", s)),
-            _ => path,
-        };
-        // if ends with a slash, preserve the slash
-        let path = match (url.ends_with('/'), path) {
-            (true, Some(s)) if !s.ends_with('/') => Some(format!("{}/", s)),
-            (_, path) => path,
-        };
-        let port = match port {
-            Some(s) if s.is_empty() => Self::decide_port(&scheme),
-            Some(p) => Some(p),
-            None => Self::decide_port(&scheme),
-        };
-        URL {
-            scheme,
-            host,
-            port,
-            path,
+impl Url {
+    pub fn new(url: &str) -> Url {
+        let (scheme, url) = url.split_once(':').unwrap();
+        match scheme {
+            "http" | "https" => {
+                let splitter = Splitter { tokens: "//?:/" };
+                let mut parts = splitter.split(url);
+                // ["", "", host, <port>?, <path>]
+                let (_, _, host, port, path) = (
+                    parts.pop(),
+                    parts.pop(),
+                    parts.pop(),
+                    parts.pop(),
+                    parts.pop(),
+                );
+                // always start a path with a slash if not empty
+                let path = match path {
+                    Some(s) if !s.is_empty() => Some(format!("/{}", s)),
+                    _ => path,
+                };
+                // if ends with a slash, preserve the slash
+                let path = match (url.ends_with('/'), path) {
+                    (true, Some(s)) if !s.ends_with('/') => Some(format!("{}/", s)),
+                    (_, path) => path,
+                };
+                let port = Self::decide_port(scheme, port);
+                Url::Web(scheme.to_string(), host.unwrap(), port, path.unwrap())
+            }
+            "data" => {
+                let (mimetype, data) = url
+                    .split_once(',')
+                    .map(|(first, second)| (first.to_string(), second.to_string()))
+                    .unwrap();
+                Url::Data(scheme.to_string(), mimetype, data)
+            }
+            "file" => Url::File(
+                scheme.to_string(),
+                url.strip_prefix("//").unwrap().to_string(),
+            ),
+            _ => todo!("the rest"),
         }
     }
 
-    fn decide_port(scheme: &Option<String>) -> Option<String> {
-        if *scheme == Some(String::from("https")) {
-            Some(String::from("443"))
-        } else {
-            Some(String::from("80"))
+    fn decide_port(scheme: &str, port: Option<String>) -> String {
+        match port {
+            Some(s) if s.is_empty() => Self::default_port(scheme),
+            None => Self::default_port(scheme),
+            Some(p) => p,
         }
     }
+
+    fn default_port(scheme: &str) -> String {
+        match scheme {
+            "https" => "443",
+            "http" => "80",
+
+            _ => "",
+        }
+        .to_string()
+    }
+
+    // fn request_response(&self) -> Response {
+
+    // }
 }
 
 struct Splitter<'a> {
@@ -135,47 +168,101 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_url_exampleorg() {
-        let url = URL::new("http://example.org/");
-        assert_eq!(url.scheme, Some(String::from("http")));
-        assert_eq!(url.host, Some(String::from("example.org")));
-        assert_eq!(url.path, Some(String::from("/")));
+    fn url_exampleorg() {
+        let url = Url::new("http://example.org/");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "example.org".to_string());
+                assert_eq!(port, "80".to_string());
+                assert_eq!(path, "/");
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[test]
-    fn test_url_exampleorg_no_slash() {
-        let url = URL::new("http://example.org");
-        assert_eq!(url.host, Some(String::from("example.org")));
-        assert_eq!(url.path, Some(String::from("")));
+    fn url_exampleorg_no_slash() {
+        let url = Url::new("http://example.org");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "example.org".to_string());
+                assert_eq!(port, "80".to_string());
+                assert_eq!(path, "");
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[test]
-    fn test_url_with_path() {
-        let url = URL::new("http://example.org/my/path");
-        assert_eq!(url.host, Some(String::from("example.org")));
-        assert_eq!(url.path, Some(String::from("/my/path")));
+    fn url_with_path() {
+        let url = Url::new("http://example.org/my/path");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "example.org".to_string());
+                assert_eq!(port, "80".to_string());
+                assert_eq!(path, "/my/path");
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[test]
-    fn test_url_with_host_port() {
-        let url = URL::new("http://127.0.0.1:1234/");
-        assert_eq!(url.host, Some(String::from("127.0.0.1")));
-        assert_eq!(url.port, Some(String::from("1234")));
+    fn url_with_host_port() {
+        let url = Url::new("http://127.0.0.1:1234/");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "http".to_string());
+                assert_eq!(host, "127.0.0.1".to_string());
+                assert_eq!(port, "1234".to_string());
+                assert_eq!(path, "/");
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[test]
-    fn test_url_with_https() {
-        let url = URL::new("https://example.org");
-        assert_eq!(url.scheme, Some(String::from("https")));
-        assert_eq!(url.port, Some(String::from("443")));
+    fn url_with_https() {
+        let url = Url::new("https://example.org");
+        match url {
+            Url::Web(scheme, host, port, path) => {
+                assert_eq!(scheme, "https".to_string());
+                assert_eq!(host, "example.org".to_string());
+                assert_eq!(port, "443".to_string());
+                assert_eq!(path, "");
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[test]
-    fn test_url_with_file() {
+    fn url_with_file() {
         let cwd = std::env::current_dir().unwrap();
         let parent_path = cwd.display();
-        let url = URL::new(format!("file://{}/data/index.html", parent_path).as_str());
-        assert_eq!(url.scheme, Some(String::from("file")));
-        assert_eq!(url.path, Some(format!("{}/data/index.html", parent_path)));
+        let url = Url::new(format!("file://{}/data/index.html", parent_path).as_str());
+
+        match url {
+            Url::File(scheme, path) => {
+                assert_eq!(scheme, "file".to_string());
+                assert_eq!(path, format!("{}/data/index.html", parent_path));
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
+    fn data_scheme() {
+        let raw_url = "data:text/html,Hello world!";
+        let url = Url::new(raw_url);
+        match url {
+            Url::Data(scheme, mimetype, data) => {
+                assert_eq!(scheme, "data".to_string());
+                assert_eq!(mimetype, "text/html".to_string());
+                assert_eq!(data, "Hello world!".to_string());
+            }
+            _ => unreachable!(),
+        };
     }
 }
