@@ -1,3 +1,5 @@
+use std::io::prelude::*;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::{collections::HashMap, fmt::Display};
 
 struct Response {
@@ -9,8 +11,12 @@ struct Response {
 }
 
 pub enum Url {
-    //  scheme, host, port, path
-    Web(String, String, String, String),
+    Web {
+        scheme: String,
+        host: String,
+        port: u16,
+        path: String,
+    },
     // scheme, path
     File(String, String),
     // scheme, mimetype, data
@@ -22,7 +28,12 @@ pub enum Url {
 impl Display for Url {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 write!(f, "{}://{}:{}{}", scheme, host, port, path)
             }
             Url::File(scheme, path) => write!(f, "{}://{}", scheme, path),
@@ -57,12 +68,12 @@ impl Url {
                     (true, s) if !s.ends_with('/') => format!("{}/", s),
                     (_, path) => path,
                 };
-                Url::Web(
-                    scheme.to_string(),
-                    host.to_string(),
-                    port.to_string(),
-                    path.to_string(),
-                )
+                Url::Web {
+                    scheme: scheme.to_string(),
+                    host: host.to_string(),
+                    port: port.parse().expect("todo"),
+                    path: path.to_string(),
+                }
             }
             "data" => {
                 let (mimetype, data) = url
@@ -88,14 +99,57 @@ impl Url {
             _ => "",
         }
     }
+}
 
-    fn request_response(&self) -> Response {
-        host_port = (self.host, self.port)
-        s = socket.socket(
-            family=socket.AF_INET, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
-        )
-        s.connect(host_port)
+enum ResponseError {
+    Socket(std::io::Error),
+}
 
+impl From<std::io::Error> for ResponseError {
+    fn from(value: std::io::Error) -> Self {
+        ResponseError::Socket(value)
+    }
+}
+
+impl std::error::Error for ResponseError {}
+
+impl std::fmt::Debug for ResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Socket(err) => f.debug_tuple("Socket").field(err).finish(),
+        }
+    }
+}
+
+impl std::fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO: something else
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Url {
+    fn request_response(&self) -> Result<Response, ResponseError> {
+        match self {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
+                let addrs = format!("{}:{}", host, port).to_socket_addrs().unwrap();
+                let addr = addrs.into_iter().next().expect("todo");
+
+                let mut stream = TcpStream::connect(addr)?;
+
+                // stream.write(&[1])?;
+                // stream.read(&mut [0; 128])?;
+                todo!()
+            }
+            Url::File(_, _) => todo!(),
+            Url::Data(_, _, _) => todo!(),
+            Url::ViewSource(_) => todo!(),
+        }
     }
 }
 
@@ -108,10 +162,15 @@ mod tests {
     fn url_exampleorg() {
         let url = Url::new("http://example.org/");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "example.org".to_string());
-                assert_eq!(port, "80".to_string());
+                assert_eq!(port, 80);
                 assert_eq!(path, "/");
             }
             _ => unreachable!(),
@@ -122,10 +181,15 @@ mod tests {
     fn url_exampleorg_no_slash() {
         let url = Url::new("http://example.org");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "example.org".to_string());
-                assert_eq!(port, "80".to_string());
+                assert_eq!(port, 80);
                 assert_eq!(path, "");
             }
             _ => unreachable!(),
@@ -136,10 +200,15 @@ mod tests {
     fn url_with_path() {
         let url = Url::new("http://example.org/my/path");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "example.org".to_string());
-                assert_eq!(port, "80".to_string());
+                assert_eq!(port, 80);
                 assert_eq!(path, "/my/path");
             }
             _ => unreachable!(),
@@ -150,10 +219,15 @@ mod tests {
     fn url_with_host_port() {
         let url = Url::new("http://127.0.0.1:1234/");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "127.0.0.1".to_string());
-                assert_eq!(port, "1234".to_string());
+                assert_eq!(port, 1234);
                 assert_eq!(path, "/");
             }
             _ => unreachable!(),
@@ -164,10 +238,15 @@ mod tests {
     fn url_with_host_port_path() {
         let url = Url::new("http://127.0.0.1:1234/my/path/hello");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "127.0.0.1".to_string());
-                assert_eq!(port, "1234".to_string());
+                assert_eq!(port, 1234);
                 assert_eq!(path, "/my/path/hello");
             }
             _ => unreachable!(),
@@ -178,10 +257,15 @@ mod tests {
     fn url_with_https() {
         let url = Url::new("https://example.org");
         match url {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "https".to_string());
                 assert_eq!(host, "example.org".to_string());
-                assert_eq!(port, "443".to_string());
+                assert_eq!(port, 443);
                 assert_eq!(path, "");
             }
             _ => unreachable!(),
@@ -227,10 +311,15 @@ mod tests {
         };
 
         match *the_source {
-            Url::Web(scheme, host, port, path) => {
+            Url::Web {
+                scheme,
+                host,
+                port,
+                path,
+            } => {
                 assert_eq!(scheme, "http".to_string());
                 assert_eq!(host, "localhost".to_string());
-                assert_eq!(port, "8888".to_string());
+                assert_eq!(port, 8888);
                 assert_eq!(path, "/data/index.html");
             }
             _ => unreachable!(),
@@ -240,7 +329,7 @@ mod tests {
     #[test]
     fn request_response() {
         let url = Url::new("http://localhost:8888/data/index.html");
-        let response = url.request_response();
+        let response = url.request_response().unwrap();
         assert_eq!(response.version, "HTTP/1.0");
         assert_eq!(response.status, "200");
         assert_eq!(response.explanation, "OK\r\n");
@@ -248,5 +337,4 @@ mod tests {
         assert_eq!(response.body, Some("<html>hi</html>".to_string()));
         // assert_eq!(url.num_sockets(), 1);
     }
-
 }
