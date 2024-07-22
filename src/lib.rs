@@ -1,5 +1,5 @@
 use std::io::prelude::*;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::{collections::HashMap, fmt::Display};
 
 struct Response {
@@ -101,6 +101,24 @@ impl Url {
     }
 }
 
+// impl for Url::Web
+impl Url {
+    fn build_socket_addr(&self) -> SocketAddr {
+        match self {
+            Url::Web {
+                scheme: _,
+                host,
+                port,
+                path: _,
+            } => {
+                let addrs = format!("{}:{}", host, port).to_socket_addrs().unwrap();
+                addrs.into_iter().next().expect("todo")
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 enum ResponseError {
     Socket(std::io::Error),
 }
@@ -132,19 +150,25 @@ impl Url {
     fn request_response(&self) -> Result<Response, ResponseError> {
         match self {
             Url::Web {
-                scheme,
+                scheme: _,
                 host,
-                port,
+                port: _,
                 path,
             } => {
-                let addrs = format!("{}:{}", host, port).to_socket_addrs().unwrap();
-                let addr = addrs.into_iter().next().expect("todo");
-
+                let addr = self.build_socket_addr();
                 let mut stream = TcpStream::connect(addr)?;
-
-                // stream.write(&[1])?;
+                stream.write_all(format!("GET {path} HTTP/1.0\r\n").as_bytes())?;
+                stream.write_all(format!("HOST {host}\r\n").as_bytes())?;
+                stream.write_all("User-Agent: Goat\r\n".as_bytes())?;
+                stream.write_all("\r\n".as_bytes())?;
                 // stream.read(&mut [0; 128])?;
-                todo!()
+                Ok(Response {
+                    version: "".to_string(),
+                    status: "".to_string(),
+                    explanation: "".to_string(),
+                    headers: HashMap::new(),
+                    body: Some("".to_string()),
+                })
             }
             Url::File(_, _) => todo!(),
             Url::Data(_, _, _) => todo!(),
@@ -155,6 +179,8 @@ impl Url {
 
 #[cfg(test)]
 mod tests {
+
+    use httpmock::{Method::GET, MockServer};
 
     use super::*;
 
@@ -328,13 +354,21 @@ mod tests {
 
     #[test]
     fn request_response() {
-        let url = Url::new("http://localhost:8888/data/index.html");
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/data/index.html");
+            then.status(200).body("<html>hi</html>");
+        });
+
+        let url = Url::new(server.url("/data/index.html").as_str());
         let response = url.request_response().unwrap();
         assert_eq!(response.version, "HTTP/1.0");
         assert_eq!(response.status, "200");
         assert_eq!(response.explanation, "OK\r\n");
         assert_eq!(response.headers["content-type"], "text/html");
         assert_eq!(response.body, Some("<html>hi</html>".to_string()));
+        mock.assert_hits(1);
         // assert_eq!(url.num_sockets(), 1);
     }
 }
