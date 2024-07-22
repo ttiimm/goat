@@ -1,9 +1,10 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 struct Response {
-    version: Option<String>,
-    status: Option<String>,
-    explanation: Option<String>,
+    version: String,
+    status: String,
+    explanation: String,
+    headers: HashMap<String, String>,
     body: Option<String>,
 }
 
@@ -56,7 +57,12 @@ impl Url {
                     (true, s) if !s.ends_with('/') => format!("{}/", s),
                     (_, path) => path,
                 };
-                Url::Web(scheme.to_string(), host.to_string(), port.to_string(), path.to_string())
+                Url::Web(
+                    scheme.to_string(),
+                    host.to_string(),
+                    port.to_string(),
+                    path.to_string(),
+                )
             }
             "data" => {
                 let (mimetype, data) = url
@@ -69,9 +75,7 @@ impl Url {
                 scheme.to_string(),
                 url.strip_prefix("//").unwrap().to_string(),
             ),
-            "view-source" => Url::ViewSource(
-                Box::new(Url::new(url))
-            ),
+            "view-source" => Url::ViewSource(Box::new(Url::new(url))),
             _ => todo!("the rest"),
         }
     }
@@ -85,9 +89,14 @@ impl Url {
         }
     }
 
-    // fn request_response(&self) -> Response {
+    fn request_response(&self) -> Response {
+        host_port = (self.host, self.port)
+        s = socket.socket(
+            family=socket.AF_INET, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
+        s.connect(host_port)
 
-    // }
+    }
 }
 
 #[cfg(test)]
@@ -213,9 +222,7 @@ mod tests {
         let raw_url = "view-source:http://localhost:8888/data/index.html";
         let url = Url::new(raw_url);
         let the_source = match url {
-            Url::ViewSource(the_source) => {
-                the_source
-            },
+            Url::ViewSource(the_source) => the_source,
             _ => unreachable!(),
         };
 
@@ -225,8 +232,21 @@ mod tests {
                 assert_eq!(host, "localhost".to_string());
                 assert_eq!(port, "8888".to_string());
                 assert_eq!(path, "/data/index.html");
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
+
+    #[test]
+    fn request_response() {
+        let url = Url::new("http://localhost:8888/data/index.html");
+        let response = url.request_response();
+        assert_eq!(response.version, "HTTP/1.0");
+        assert_eq!(response.status, "200");
+        assert_eq!(response.explanation, "OK\r\n");
+        assert_eq!(response.headers["content-type"], "text/html");
+        assert_eq!(response.body, Some("<html>hi</html>".to_string()));
+        // assert_eq!(url.num_sockets(), 1);
+    }
+
 }
